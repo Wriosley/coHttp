@@ -1,0 +1,3 @@
+/home/sharksbeer/myProjects/coHttp/build/CMakeFiles/server.dir
+/home/sharksbeer/myProjects/coHttp/build/CMakeFiles/edit_cache.dir
+/home/sharksbeer/myProjects/coHttp/build/CMakeFiles/rebuild_cache.dir
