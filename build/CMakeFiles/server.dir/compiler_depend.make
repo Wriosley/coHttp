@@ -282,8 +282,58 @@ CMakeFiles/server.dir/server.cpp.o: ../server.cpp \
   /usr/include/c++/11/map \
   /usr/include/c++/11/bits/stl_tree.h \
   /usr/include/c++/11/bits/stl_map.h \
-  /usr/include/c++/11/bits/stl_multimap.h
+  /usr/include/c++/11/bits/stl_multimap.h \
+  /usr/include/c++/11/sstream \
+  /usr/include/c++/11/istream \
+  /usr/include/c++/11/ios \
+  /usr/include/c++/11/bits/ios_base.h \
+  /usr/include/c++/11/bits/locale_classes.h \
+  /usr/include/c++/11/bits/locale_classes.tcc \
+  /usr/include/c++/11/streambuf \
+  /usr/include/c++/11/bits/streambuf.tcc \
+  /usr/include/c++/11/bits/basic_ios.h \
+  /usr/include/c++/11/bits/locale_facets.h \
+  /usr/include/c++/11/cwctype \
+  /usr/include/wctype.h \
+  /usr/include/x86_64-linux-gnu/bits/wctype-wchar.h \
+  /usr/include/x86_64-linux-gnu/c++/11/bits/ctype_base.h \
+  /usr/include/c++/11/bits/streambuf_iterator.h \
+  /usr/include/x86_64-linux-gnu/c++/11/bits/ctype_inline.h \
+  /usr/include/c++/11/bits/locale_facets.tcc \
+  /usr/include/c++/11/bits/basic_ios.tcc \
+  /usr/include/c++/11/ostream \
+  /usr/include/c++/11/bits/ostream.tcc \
+  /usr/include/c++/11/bits/istream.tcc \
+  /usr/include/c++/11/bits/sstream.tcc
 
+
+/usr/include/c++/11/bits/istream.tcc:
+
+/usr/include/c++/11/bits/ostream.tcc:
+
+/usr/include/c++/11/ostream:
+
+/usr/include/x86_64-linux-gnu/c++/11/bits/ctype_inline.h:
+
+/usr/include/c++/11/bits/streambuf_iterator.h:
+
+/usr/include/x86_64-linux-gnu/c++/11/bits/ctype_base.h:
+
+/usr/include/x86_64-linux-gnu/bits/wctype-wchar.h:
+
+/usr/include/c++/11/cwctype:
+
+/usr/include/c++/11/streambuf:
+
+/usr/include/c++/11/bits/locale_classes.tcc:
+
+/usr/include/c++/11/bits/locale_classes.h:
+
+/usr/include/c++/11/bits/ios_base.h:
+
+/usr/include/c++/11/istream:
+
+/usr/include/c++/11/sstream:
 
 /usr/include/c++/11/bits/stl_multimap.h:
 
@@ -300,6 +350,8 @@ CMakeFiles/server.dir/server.cpp.o: ../server.cpp \
 /usr/include/c++/11/bits/hashtable.h:
 
 /usr/include/c++/11/unordered_map:
+
+/usr/include/c++/11/bits/basic_ios.h:
 
 /usr/include/c++/11/bits/uniform_int_dist.h:
 
@@ -334,6 +386,8 @@ CMakeFiles/server.dir/server.cpp.o: ../server.cpp \
 /usr/include/x86_64-linux-gnu/bits/floatn-common.h:
 
 /usr/include/x86_64-linux-gnu/bits/types/wint_t.h:
+
+/usr/include/c++/11/bits/basic_ios.tcc:
 
 /usr/include/c++/11/bits/enable_special_members.h:
 
@@ -403,6 +457,8 @@ CMakeFiles/server.dir/server.cpp.o: ../server.cpp \
 
 /usr/include/x86_64-linux-gnu/bits/posix2_lim.h:
 
+/usr/include/c++/11/bits/sstream.tcc:
+
 /usr/include/c++/11/new:
 
 /usr/include/x86_64-linux-gnu/sys/epoll.h:
@@ -422,6 +478,8 @@ CMakeFiles/server.dir/server.cpp.o: ../server.cpp \
 /usr/include/c++/11/ext/type_traits.h:
 
 /usr/include/x86_64-linux-gnu/bits/fcntl.h:
+
+/usr/include/c++/11/bits/streambuf.tcc:
 
 /usr/include/string.h:
 
@@ -699,6 +757,8 @@ CMakeFiles/server.dir/server.cpp.o: ../server.cpp \
 
 /usr/include/c++/11/ratio:
 
+/usr/include/c++/11/bits/locale_facets.h:
+
 /usr/include/c++/11/bits/exception.h:
 
 /usr/include/c++/11/pstl/glue_algorithm_defs.h:
@@ -737,6 +797,8 @@ CMakeFiles/server.dir/server.cpp.o: ../server.cpp \
 
 /usr/include/c++/11/bits/memoryfwd.h:
 
+/usr/include/c++/11/bits/locale_facets.tcc:
+
 /usr/include/c++/11/bits/this_thread_sleep.h:
 
 /usr/include/x86_64-linux-gnu/bits/types/struct_tm.h:
@@ -764,6 +826,8 @@ CMakeFiles/server.dir/server.cpp.o: ../server.cpp \
 /usr/include/x86_64-linux-gnu/c++/11/bits/gthr.h:
 
 /usr/include/x86_64-linux-gnu/c++/11/bits/gthr-default.h:
+
+/usr/include/wctype.h:
 
 /usr/include/sched.h:
 
@@ -824,6 +888,8 @@ CMakeFiles/server.dir/server.cpp.o: ../server.cpp \
 /usr/include/c++/11/bits/basic_string.tcc:
 
 /usr/include/c++/11/system_error:
+
+/usr/include/c++/11/ios:
 
 /usr/include/c++/11/utility:
 

@@ -11,13 +11,32 @@
 #include<vector>
 #include<algorithm>
 #include<map>
+#include <string>
+#include <sstream>
+#include <vector>
+
+int err;
+std::error_category *cat;
+
+std::error_category const &gai_category(){
+    static struct final : std::error_category{
+        char const *name() const noexcept override{
+            return "getaddrinfo";
+        }
+        std::string message(int err) const override{
+            return gai_strerror(err);
+        }
+    } instance;
+    return instance;
+}
 
 int check_error(const char* msg,int res)
 {
     if(res==-1)
     {
         fmt::println("{}:{}",msg,strerror(errno));
-        throw;
+        auto ec = std::error_code(errno, std::system_category());
+        throw std::system_error(ec, msg);
     }
     return res;
 }
@@ -86,8 +105,9 @@ struct address_resolver{
     address_resolved_entry  resolve(std::string const &name,std::string const &service){
         int err = getaddrinfo(name.c_str(),service.c_str(),NULL,&m_head);
         if (err!=0){
-            fmt::println("getaddrinfo error:{},{}",gai_strerror(err),err);
-            throw;
+            //fmt::println("getaddrinfo error:{},{}",gai_strerror(err),err);
+            auto ec = std::error_code(err, gai_category());
+            throw std::system_error(ec, name + ":" + service);
         }
         return {m_head};
     }
@@ -127,6 +147,11 @@ struct http11_header_parser{
 
     void _extract_headers(){
         size_t pos = m_header.find("\r\n");
+        if (pos == std::string::npos) {
+            throw std::runtime_error("Invalid HTTP request: no CRLF found");
+        }
+        m_heading_line = m_header.substr(0, pos);  // 截取第一行
+        //fmt::println("my heading line:{}",m_heading_line);
         while(pos!=std::string::npos){
             //skip \r\n
             pos+=2;
@@ -145,11 +170,15 @@ struct http11_header_parser{
                 //turn the keys to lower case
                 std::transform(key.begin(),key.end(),key.begin(),[](char c){
                     if(c>='A' && c<='Z'){
-                        return c - 'A' + 'a';
+                        return static_cast<char>(c - 'A' + 'a');
                     }
+                    return static_cast<char>(c);
+                    
                 });
                 m_header_keys[key] = value;
+                //fmt::println("found header:{}:{}",key,m_header_keys[key]);
                 if(key=="content-length"){
+                    //fmt::println("found content length:{}",value);
                     content_length = std::stoi(value);
                 }
             }
@@ -159,6 +188,7 @@ struct http11_header_parser{
 
     void push_chunk(std::string_view chunk){
         if(!m_header_finished){
+            //fmt::println("starting to push chunk to header");
             m_header.append(chunk);
             size_t header_len = m_header.find("\r\n\r\n");
             //cant find the end of header
@@ -167,6 +197,7 @@ struct http11_header_parser{
                 //keep the body part in m_body
                 m_body = m_header.substr(header_len + 4);
                 m_header.resize(header_len);
+                //fmt::println("starting to extract headers");
                 _extract_headers();
             }
         }
@@ -178,6 +209,7 @@ struct http11_header_parser{
     }
 
     std::string &headline(){
+        fmt::println("heading line:{}",m_heading_line);
         return m_heading_line;
     }
 
@@ -194,7 +226,7 @@ struct http11_header_parser{
 
 // http request parser
 template<class HeaderParser = http11_header_parser>
-struct http_request_parser{
+struct _http_base_parser{
     HeaderParser m_header_parser;
     size_t m_content_length = 0;
     bool m_body_finished = false;
@@ -214,14 +246,24 @@ struct http_request_parser{
     std::string &headers_raw(){
         return m_header_parser.headers_raw();
     }
+
+    std::string &headline(){
+        return m_header_parser.headline();
+    }
+
+
+
+
     size_t _extract_content_length(){
         auto &headers = m_header_parser.headers();
-        auto it = headers.find("content_length");
+        auto it = headers.find("content-length");
         if(it == headers.end()){
+            //fmt::println("no content length header, assume 0");
             return 0;
         }
         try
         {
+            //fmt::println("found content length:{}",it->second);
             return std::stoi(it->second);
         }
         catch(std::invalid_argument const &)
@@ -231,11 +273,13 @@ struct http_request_parser{
     }
  
     void push_chunk(std::string_view chunk){
+        
         if(!m_header_parser.header_finished()){
             m_header_parser.push_chunk(chunk);
             if(m_header_parser.header_finished()){
                 m_content_length = _extract_content_length();
                 if(body().size() >= m_content_length){
+                    //fmt::println("body size {} >= content length {}",body().size(),m_content_length);
                     m_body_finished = true;
                     body().resize(m_content_length);
                 }
@@ -248,19 +292,120 @@ struct http_request_parser{
                     body().resize(m_content_length);
             }
         }
+    }
 
+    std::string _headline_first(){
+        //get / http/1.1 request
+        //http/1.1 200 ok response
+        auto &line = headline();
+        size_t space = line.find(' ');
+        if(space==std::string::npos){
+            return "";
+        }
+        return line.substr(0,space);
+
+    }
+
+    std::string _headline_second(){
+        auto &line = headline();
+        size_t space1 = line.find(' ');
+        if (space1 == std::string::npos) {
+            return {};
+        }
+        size_t space2 = line.find(' ', space1 + 1);
+        if (space2 == std::string::npos) {
+            // 只找到一个空格，返回后半部分
+            return line.substr(space1 + 1);
+        }
+        // 返回第一个空格和第二个空格之间的部分
+        return line.substr(space1 + 1, space2 - space1 - 1);
+    }
+    std::string _headline_third() {
+        auto &line = headline();
+        size_t space1 = line.find(' ');
+        if (space1 == std::string::npos) {
+            return {};
+        }
+        size_t space2 = line.find(' ', space1 + 1);
+        return line.substr(space2 + 1);
+    }
+
+
+
+};
+
+template <class HeaderParser = http11_header_parser>
+struct http_response_parser : _http_base_parser<HeaderParser>{
+    
+    std::string http_version(){
+        return this->_headline_first();
+    }
+
+    int status() {
+        auto s = this->_headline_second();
+        try{
+            return std::stoi(s);
+        }catch(std::logic_error const &){
+            return -1;
+        }
+    }
+
+    std::string status_string(){
+        return this->_headline_third();
+    }
+};
+
+template<class HeaderParser = http11_header_parser>
+struct http_request_parser : _http_base_parser<HeaderParser>{
+    std::string method(){
+        return this->_headline_first();
+    }
+
+    std::string url(){
+        return this->_headline_second();
+    }
+
+    std::string http_version(){
+        return this->_headline_third();
+    }
+};
+
+struct http_response_writer {
+    std::ostringstream oss;   // 用于拼接 header
+    std::string buf;          // 保存 header 的 buffer
+    bool header_finished = false;
+
+    // 开始 header，写入状态行
+    void begin_header(int status_code, const std::string& status_text = "OK") {
+        oss << "HTTP/1.1 " << status_code << " " << status_text << "\r\n";
+    }
+
+    // 写入单个 header
+    void write_header(const std::string& key, const std::string& value) {
+        oss << key << ": " << value << "\r\n";
+    }
+
+    // 结束 header，写入空行
+    void end_headers() {
+        oss << "\r\n";
+        buf = oss.str();
+        header_finished = true;
+    }
+
+    // 返回 header 缓冲区（只包含 header，不包含 body）
+    std::string& buffer() {
+        return buf;
     }
 };
 
 std::vector<std::thread> pool;
 
-int main(){
-    setlocale(LC_ALL,"zh_CN.UTF-8");
+auto server(){
     address_resolver resolver;
 
     fmt::println("listening:127.0.0.1:8080");
 
-    auto entry = resolver.resolve("127.0.0.1","8080");
+    auto entry = resolver.resolve("-1","8080");
     
     int listenfd = entry.create_socket_and_bind();
     
@@ -274,31 +419,69 @@ int main(){
         socket_address_storage addr;
         int connid = CHECK_CALL(accept,listenfd,&addr.m_addr,&addr.m_addrlen);
         pool.emplace_back([connid]{
-            char buf[1024];
-            //size_t n = CHECK_CALL(read,connid,buf,sizeof(buf));
-            http_request_parser req_parse;
-            do{
+            while(true){
+                char buf[1024];
+                //size_t n = CHECK_CALL(read,connid,buf,sizeof(buf));
+                http_request_parser req_parse;
+                do{
+                    
+                    size_t n = CHECK_CALL(read,connid,buf,sizeof(buf));
+                    //fmt::println("read {} bytes",n);
+                    if(n==0){
+                        //if eof is received
+                        fmt::println("eof received from connid:{}",connid);
+                        goto quit;
+                    }
+                    req_parse.push_chunk(std::string_view(buf,n));
+                }while(!req_parse.request_finished());
+
+                /*
+                fmt::println("*****************");
+                fmt::println("request headers:{}",req_parse.headers_raw());
+                fmt::println(" ");
+                fmt::println("request body:{}",req_parse.body());
                 
-                size_t n = CHECK_CALL(read,connid,buf,sizeof(buf));
-                //fmt::println("read {} bytes",n);
-                req_parse.push_chunk(std::string_view(buf,n));
-            }while(!req_parse.request_finished());
+                fmt::println(" ");*/
+                std::string body = req_parse.body();
+                if(body.empty()){
+                    body = "<html><body><h1>your request is empty</h1></body></html>";
+                }
+                else{
+                    body = "<html><body><h1>your request body is:</h1><p>" + body + "</p></body></html>";
+                }
 
-            fmt::println("*****************");
-            fmt::println("request headers:{}",req_parse.headers_raw());
-            fmt::println(" ");
-            fmt::println("request body:{}",req_parse.body());
-            std::string body = req_parse.body();
-            fmt::println(" ");
 
-            std::string res = "HTTP/1.1 200 OK\r\nServer: co_http\r\nConnection: close\r\nContent-length: "
-            +std::to_string(body.size()) +"\r\n\r\n"+body;
 
-            fmt::println("response:{}",res);
-            fmt::println("*****************");
-            CHECK_CALL(write,connid,res.data(),res.size());
+                //writer part
+                http_response_writer res_writer;
+                res_writer.begin_header(200);
+                res_writer.write_header("Server","co_http");
+                res_writer.write_header("Content-Type", "text/html;charset=utf-8");
+                res_writer.write_header("Connection","keep-alive");
+                res_writer.write_header("Content-length",std::to_string(body.size()));
+                res_writer.end_headers();
+                auto &buffer = res_writer.buffer();
+                CHECK_CALL(write, connid, buffer.data(), buffer.size());
+                CHECK_CALL(write, connid, body.data(), body.size());
+
+                //fmt::println("response:{}",buffer);
+                //fmt::println("*****************");
+                fmt::println("handled request from connid:{}",connid);
+            }
+        quit:
+            fmt::println("closing connid:{}",connid);
             close(connid);
-        });
+        }
+    );
+    }
+}
+
+int main(){
+    setlocale(LC_ALL,"zh_CN.UTF-8");
+    try{
+        server();
+    } catch(std::system_error const &e){
+        fmt::println("error:{}",e.what());
     }
     for(auto &t:pool){
         t.join();
