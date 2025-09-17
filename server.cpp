@@ -513,6 +513,41 @@ struct http_response_writer {
 */
 
 
+
+template<class ...Args>
+using callback = std::function<void(Args...)>;
+
+struct async_file{
+    int m_fd;
+
+    static async_file async_wrap(int fd){
+        int flags = CHECK_CALL(fcntl, fd, F_GETFL);
+        flags |= O_NONBLOCK;
+        CHECK_CALL(fcntl, fd, F_SETFL, flags);
+
+        return async_file{fd};
+    }
+
+    ssize_t sync_read(bytes_view buf){
+        ssize_t ret;
+        do{
+           ret = CHECK_CALL_EXCEPT(EAGAIN, read, m_fd, buf.data(), buf.size());
+        }while(ret==-1);
+        return ret;
+    }
+
+    void async_read(bytes_view buf, callback<ssize_t> cb){
+        ssize_t ret;
+        do{
+           ret = CHECK_CALL_EXCEPT(EAGAIN, read, m_fd, buf.data(), buf.size());
+        }while(ret==-1);
+        cb(ret);
+    }
+    ssize_t sync_write(bytes_view buf){
+        return CHECK_CALL(write, m_fd, buf.data(), buf.size());
+    }
+};
+
 std::vector<std::thread> pool;
 
 auto server(){
@@ -534,21 +569,22 @@ auto server(){
         address_resolver::socket_address_storage addr;
         int connid = CHECK_CALL(accept,listenfd,&addr.m_addr,&addr.m_addrlen);
         pool.emplace_back([connid]{
+            auto conn = async_file::async_wrap(connid);
+            bytes_buffer buf(1024);
             while(true){
-                char buf[1024];
                 //size_t n = CHECK_CALL(read,connid,buf,sizeof(buf));
                 http_request_parser req_parse;
                 do{
                     
-                    size_t n = CHECK_CALL(read,connid,buf,sizeof(buf));
+                    size_t n = conn.sync_read(buf);
                     //fmt::println("read {} bytes",n);
                     if(n==0){
                         //if eof is received
-                        //fmt::println("eof received from connid:{}",connid);
+                        fmt::println("eof received from connid:{}",connid);
                         goto quit;
                     }
                     //fmt::println("starting pushing chunk");
-                    req_parse.push_chunk(std::string_view(buf,n));
+                    req_parse.push_chunk(buf.subspan(0,n));
                     //fmt::println("pushed chunk successfully");
                 }while(!req_parse.request_finished());
 
@@ -578,16 +614,16 @@ auto server(){
                 res_writer.write_header("Connection","keep-alive");
                 res_writer.write_header("Content-length",std::to_string(body.size()));
                 res_writer.end_header();
+                res_writer.write_body(body);
                 auto &buffer = res_writer.buffer();
-                fmt::println("response headers:{}",std::string_view(buffer.data(),buffer.size()));
-                if(CHECK_CALL_EXCEPT(EPIPE, write, connid, buffer.data(), buffer.size())==-1){
-                    fmt::println("starting to write buffer");
-                    break;}
-                if(CHECK_CALL_EXCEPT(EPIPE, write, connid, body.data(), body.size())==-1)
-                    break;
-            fmt::println("write response successfully");
+                //fmt::println("response headers:{}",std::string_view(buffer.data(),buffer.size()));
+                
+                conn.sync_write(buffer);
+                
+
+            //fmt::println("write response successfully");
                 //fmt::println("response:{}",buffer);
-                fmt::println("*****************");
+                //fmt::println("*****************");
                 fmt::println("handled request from connid:{}",connid);
             }
         quit:
