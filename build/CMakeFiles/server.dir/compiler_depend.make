@@ -304,8 +304,11 @@ CMakeFiles/server.dir/server.cpp.o: ../server.cpp \
   /usr/include/c++/11/ostream \
   /usr/include/c++/11/bits/ostream.tcc \
   /usr/include/c++/11/bits/istream.tcc \
-  /usr/include/c++/11/bits/sstream.tcc
+  /usr/include/c++/11/bits/sstream.tcc \
+  ../bytes_buffer.hpp
 
+
+../bytes_buffer.hpp:
 
 /usr/include/c++/11/bits/istream.tcc:
 

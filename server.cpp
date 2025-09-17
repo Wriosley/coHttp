@@ -14,6 +14,7 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include "bytes_buffer.hpp"
 
 int err;
 std::error_category *cat;
@@ -30,77 +31,84 @@ std::error_category const &gai_category(){
     return instance;
 }
 
-int check_error(const char* msg,int res)
+template<int Except = 0, typename T>
+T check_error(const char* what,T res)
 {
     if(res==-1)
     {
-        fmt::println("{}:{}",msg,strerror(errno));
-        auto ec = std::error_code(errno, std::system_category());
-        throw std::system_error(ec, msg);
-    }
-    return res;
-}
-
-size_t check_error(const char* msg,ssize_t res){
-    if(res==-1){
-        fmt::println("{}:{}",msg,strerror(errno));
-        throw;
-    }
-    return res;
-}
-
-# define CHECK_CALL(func,...) check_error(#func,func(__VA_ARGS__))
-
-struct socket_address_fatptr{
-    struct sockaddr *m_addr;
-    socklen_t m_addrlen;
-};
-
-struct socket_address_storage{
-    union{
-        struct sockaddr m_addr;
-        struct sockaddr_storage m_addr_storage;
-    };
-
-    socklen_t m_addrlen = sizeof(struct sockaddr_storage);
-
-    operator socket_address_fatptr(){
-        return{&m_addr,m_addrlen};
-    }
-};
-
-struct address_resolved_entry {
-    struct addrinfo *m_curr=nullptr;
-
-    socket_address_fatptr get_address() const{
-        return{m_curr->ai_addr,m_curr->ai_addrlen};
-    }
-
-    int create_socket() const{
-        int sockfd=CHECK_CALL(socket,m_curr->ai_family,m_curr->ai_socktype,m_curr->ai_protocol);
-        
-        return sockfd;
-    }
-
-    int create_socket_and_bind() const{
-        int sockfd=create_socket();
-        CHECK_CALL(bind,sockfd,m_curr->ai_addr,m_curr->ai_addrlen);
-        return sockfd;
-    }
-
-    [[nodiscard]] bool next_entry(){
-        m_curr=m_curr->ai_next;
-        if(m_curr==nullptr){
-            return false;
+        if constexpr(Except!=0){
+            if(errno==Except){
+                return -1;
+            }
         }
-        return true;
+        //fmt::println("{}:{}",msg,strerror(errno));
+        auto ec = std::error_code(errno, std::system_category());
+        fmt::println(stderr,"{}: {}",what, ec.message());
+        throw std::system_error(ec, what);
     }
+    return res;
+}
 
 
-};
+# define SOURCE_INFO_IMPL(file, line) "In" file ":" #line ":"
+# define SOURCE_INFO() SOURCE_INFO_IMPL(__FILE__, __LINE__)
+# define CHECK_CALL_EXCEPT(except, func, ...) check_error<except>(SOURCE_INFO() #func, func(__VA_ARGS__))
+# define CHECK_CALL(func,...) check_error(SOURCE_INFO() #func,func(__VA_ARGS__))
+
 
 struct address_resolver{
+    struct socket_address_fatptr{
+        struct sockaddr *m_addr;
+        socklen_t m_addrlen;
+    };
+
+    struct socket_address_storage{
+        union{
+            struct sockaddr m_addr;
+            struct sockaddr_storage m_addr_storage;
+        };
+
+        socklen_t m_addrlen = sizeof(struct sockaddr_storage);
+
+        operator socket_address_fatptr(){
+            return{&m_addr,m_addrlen};
+        }
+    };
+
+    struct address_resolved_entry {
+        struct addrinfo *m_curr=nullptr;
+
+        socket_address_fatptr get_address() const{
+            return{m_curr->ai_addr,m_curr->ai_addrlen};
+        }
+
+        int create_socket() const{
+            int sockfd=CHECK_CALL(socket,m_curr->ai_family,m_curr->ai_socktype,m_curr->ai_protocol);
+            
+            return sockfd;
+        }
+
+        int create_socket_and_bind() const{
+            int sockfd=create_socket();
+            CHECK_CALL(bind,sockfd,m_curr->ai_addr,m_curr->ai_addrlen);
+            return sockfd;
+        }
+
+        [[nodiscard]] bool next_entry(){
+            m_curr=m_curr->ai_next;
+            if(m_curr==nullptr){
+                return false;
+            }
+            return true;
+        }
+
+
+    };
+
+
     struct addrinfo *m_head=nullptr;
+
+
 
     address_resolved_entry  resolve(std::string const &name,std::string const &service){
         int err = getaddrinfo(name.c_str(),service.c_str(),NULL,&m_head);
@@ -369,34 +377,141 @@ struct http_request_parser : _http_base_parser<HeaderParser>{
         return this->_headline_third();
     }
 };
+struct http11_header_writer {
+    bytes_buffer m_buffer;
 
-struct http_response_writer {
-    std::ostringstream oss;   // 用于拼接 header
-    std::string buf;          // 保存 header 的 buffer
-    bool header_finished = false;
-
-    // 开始 header，写入状态行
-    void begin_header(int status_code, const std::string& status_text = "OK") {
-        oss << "HTTP/1.1 " << status_code << " " << status_text << "\r\n";
+    void reset_state() {
+        m_buffer.clear();
     }
 
-    // 写入单个 header
-    void write_header(const std::string& key, const std::string& value) {
-        oss << key << ": " << value << "\r\n";
+    bytes_buffer &buffer() {
+        return m_buffer;
     }
 
-    // 结束 header，写入空行
-    void end_headers() {
-        oss << "\r\n";
-        buf = oss.str();
-        header_finished = true;
+    void begin_header(std::string_view first, std::string_view second,
+                      std::string_view third) {
+        m_buffer.append(first);
+        m_buffer.append_literial(" ");
+        m_buffer.append(second);
+        m_buffer.append_literial(" ");
+        m_buffer.append(third);
     }
 
-    // 返回 header 缓冲区（只包含 header，不包含 body）
-    std::string& buffer() {
-        return buf;
+    void write_header(std::string_view key, std::string_view value) {
+        m_buffer.append_literial("\r\n");
+        m_buffer.append(key);
+        m_buffer.append_literial(": ");
+        m_buffer.append(value);
+    }
+
+    void end_header() {
+        m_buffer.append_literial("\r\n\r\n");
     }
 };
+
+template <class HeaderWriter = http11_header_writer>
+struct _http_base_writer {
+    HeaderWriter m_header_writer;
+
+    void _begin_header(std::string_view first, std::string_view second,
+                       std::string_view third) {
+        m_header_writer.begin_header(first, second, third);
+    }
+
+    void reset_state() {
+        m_header_writer.reset_state();
+    }
+
+    bytes_buffer &buffer() {
+        return m_header_writer.buffer();
+    }
+
+    void write_header(std::string_view key, std::string_view value) {
+        m_header_writer.write_header(key, value);
+    }
+
+    void end_header() {
+        m_header_writer.end_header();
+    }
+
+    void write_body(std::string_view body) {
+        m_header_writer.buffer().append(body);
+    }
+};
+
+template <class HeaderWriter = http11_header_writer>
+struct http_request_writer : _http_base_writer<HeaderWriter> {
+    void begin_header(std::string_view method, std::string_view url) {
+        this->_begin_header(method, url, "HTTP/1.1");
+    }
+};
+
+template <class HeaderWriter = http11_header_writer>
+struct http_response_writer : _http_base_writer<HeaderWriter> {
+    void begin_header(int status) {
+        this->_begin_header("HTTP/1.1", std::to_string(status), "OK");
+    }
+};
+
+/*
+struct http11_header_writer {
+    bytes_buffer m_buffer;
+
+    bytes_buffer &buffer() {
+        return m_buffer;
+    }
+
+    // 开始写响应头: HTTP/1.1 <status> <reason>
+    void begin_header(std::string_view version,
+                      std::string_view status,
+                      std::string_view reason) {
+        m_buffer.append(version);
+        m_buffer.append(" ");
+        m_buffer.append(status);
+        m_buffer.append(" ");
+        m_buffer.append(reason);
+        m_buffer.append("\r\n");
+    }
+
+    // 写入一个键值对头部
+    void write_header(std::string_view key, std::string_view value) {
+        m_buffer.append(key);
+        m_buffer.append(": ");
+        m_buffer.append(value);
+        m_buffer.append("\r\n");
+    }
+
+    // 结束头部
+    void end_header() {
+        m_buffer.append("\r\n");
+    }
+};
+
+
+template <class HeaderWriter = http11_header_writer>
+struct http_response_writer {
+    HeaderWriter m_header_writer;
+
+    bytes_buffer &buffer(){
+        return m_header_writer.buffer();
+    }
+
+    void begin_header(int status){
+    m_header_writer.begin_header("HTTP/1.1", std::to_string(status), "OK");
+    }
+
+    void write_header(std::string_view key, std::string_view value){
+        m_header_writer.write_header(key, value);
+    }
+
+    void end_header(){
+        m_header_writer.end_header();
+    }
+
+};
+
+*/
+
 
 std::vector<std::thread> pool;
 
@@ -405,7 +520,7 @@ auto server(){
 
     fmt::println("listening:127.0.0.1:8080");
 
-    auto entry = resolver.resolve("-1","8080");
+    auto entry = resolver.resolve("127.0.0.1","8080");
     
     int listenfd = entry.create_socket_and_bind();
     
@@ -416,7 +531,7 @@ auto server(){
 
     while(true)
     {
-        socket_address_storage addr;
+        address_resolver::socket_address_storage addr;
         int connid = CHECK_CALL(accept,listenfd,&addr.m_addr,&addr.m_addrlen);
         pool.emplace_back([connid]{
             while(true){
@@ -429,10 +544,12 @@ auto server(){
                     //fmt::println("read {} bytes",n);
                     if(n==0){
                         //if eof is received
-                        fmt::println("eof received from connid:{}",connid);
+                        //fmt::println("eof received from connid:{}",connid);
                         goto quit;
                     }
+                    //fmt::println("starting pushing chunk");
                     req_parse.push_chunk(std::string_view(buf,n));
+                    //fmt::println("pushed chunk successfully");
                 }while(!req_parse.request_finished());
 
                 /*
@@ -453,19 +570,24 @@ auto server(){
 
 
                 //writer part
+                //fmt::println("starting to write response");
                 http_response_writer res_writer;
                 res_writer.begin_header(200);
                 res_writer.write_header("Server","co_http");
                 res_writer.write_header("Content-Type", "text/html;charset=utf-8");
                 res_writer.write_header("Connection","keep-alive");
                 res_writer.write_header("Content-length",std::to_string(body.size()));
-                res_writer.end_headers();
+                res_writer.end_header();
                 auto &buffer = res_writer.buffer();
-                CHECK_CALL(write, connid, buffer.data(), buffer.size());
-                CHECK_CALL(write, connid, body.data(), body.size());
-
+                fmt::println("response headers:{}",std::string_view(buffer.data(),buffer.size()));
+                if(CHECK_CALL_EXCEPT(EPIPE, write, connid, buffer.data(), buffer.size())==-1){
+                    fmt::println("starting to write buffer");
+                    break;}
+                if(CHECK_CALL_EXCEPT(EPIPE, write, connid, body.data(), body.size())==-1)
+                    break;
+            fmt::println("write response successfully");
                 //fmt::println("response:{}",buffer);
-                //fmt::println("*****************");
+                fmt::println("*****************");
                 fmt::println("handled request from connid:{}",connid);
             }
         quit:
