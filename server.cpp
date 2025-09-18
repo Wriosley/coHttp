@@ -524,71 +524,12 @@ struct http_response_writer : _http_base_writer<HeaderWriter>
     }
 };
 
-/*
-struct http11_header_writer {
-    bytes_buffer m_buffer;
-
-    bytes_buffer &buffer() {
-        return m_buffer;
-    }
-
-    // 开始写响应头: HTTP/1.1 <status> <reason>
-    void begin_header(std::string_view version,
-                      std::string_view status,
-                      std::string_view reason) {
-        m_buffer.append(version);
-        m_buffer.append(" ");
-        m_buffer.append(status);
-        m_buffer.append(" ");
-        m_buffer.append(reason);
-        m_buffer.append("\r\n");
-    }
-
-    // 写入一个键值对头部
-    void write_header(std::string_view key, std::string_view value) {
-        m_buffer.append(key);
-        m_buffer.append(": ");
-        m_buffer.append(value);
-        m_buffer.append("\r\n");
-    }
-
-    // 结束头部
-    void end_header() {
-        m_buffer.append("\r\n");
-    }
-};
-
-
-template <class HeaderWriter = http11_header_writer>
-struct http_response_writer {
-    HeaderWriter m_header_writer;
-
-    bytes_buffer &buffer(){
-        return m_header_writer.buffer();
-    }
-
-    void begin_header(int status){
-    m_header_writer.begin_header("HTTP/1.1", std::to_string(status), "OK");
-    }
-
-    void write_header(std::string_view key, std::string_view value){
-        m_header_writer.write_header(key, value);
-    }
-
-    void end_header(){
-        m_header_writer.end_header();
-    }
-
-};
-
-*/
-
-
-std::deque<callback<>> to_be_called_later;
+int epollfd;
 
 struct async_file
 {
     int m_fd;
+    callback<> m_resume;
 
     static async_file async_wrap(int fd)
     {
@@ -596,17 +537,17 @@ struct async_file
         flags |= O_NONBLOCK;
         CHECK_CALL(fcntl, fd, F_SETFL, flags);
 
-        return async_file{fd};
+        struct epoll_event event;
+        event.events = EPOLLET;
+        epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);
+
+        return async_file{fd, {}};
     }
 
     ssize_t sync_read(bytes_view buf)
     {
-        ssize_t ret;
-        do
-        {
-            ret = CHECK_CALL_EXCEPT(EAGAIN, read, m_fd, buf.data(), buf.size());
-        } while (ret == -1);
-        return ret;
+        return CHECK_CALL( read, m_fd, buf.data(), buf.size());
+
     }
 
     void async_read(bytes_view buf, callback<ssize_t> cb)
@@ -614,11 +555,19 @@ struct async_file
         ssize_t ret = CHECK_CALL_EXCEPT(EAGAIN, read, m_fd, buf.data(), buf.size());
         if(ret!=-1){
             cb(ret);
-        }else{
-            to_be_called_later.push_back([this,buf,cb = std::move(cb)]() mutable{
-                async_read(buf, std::move(cb));
-            });
+            return;
         }
+
+        m_resume = [this,buf,cb = std::move(cb)]() mutable{
+            async_read(buf, std::move(cb));
+        };
+        
+        struct epoll_event event;
+        event.events = EPOLLIN | EPOLLET;
+        event.data.ptr = this;
+        epoll_ctl(epollfd, EPOLL_CTL_MOD ,m_fd, &event);
+
+
     }
 
     ssize_t sync_write(bytes_view buf)
@@ -629,6 +578,12 @@ struct async_file
             ret = CHECK_CALL_EXCEPT(EAGAIN, write, m_fd, buf.data(), buf.size());
         } while (ret == -1);
         return ret;
+    }
+
+    void close_file()
+    {
+        epoll_ctl(epollfd, EPOLL_CTL_DEL, m_fd, nullptr);
+        close(m_fd);
     }
 };
 
@@ -694,7 +649,7 @@ struct http_connection_handler
 
     void do_close()
     {
-        close(m_conn.m_fd);
+        m_conn.close_file();
         delete this;
     }
 };
@@ -712,11 +667,15 @@ auto server()
     CHECK_CALL(listen, listenfd, SOMAXCONN);
 
     address_resolver::socket_address_storage addr;
-    int connid = CHECK_CALL(accept, listenfd, &addr.m_addr, &addr.m_addrlen);
-    fmt::println("accepted connid:{}", connid);
+    int connfd = CHECK_CALL(accept, listenfd, &addr.m_addr, &addr.m_addrlen);
+    fmt::println("accepted connid:{}", connfd);
+
+    epollfd = epoll_create1(0);
+
+
 
     auto conn_handler = new http_connection_handler{};
-    conn_handler->do_init(connid);
+    conn_handler->do_init(connfd);
 
     while (!to_be_called_later.empty()){
         auto task = std::move(to_be_called_later.front());
@@ -725,6 +684,8 @@ auto server()
 
     }
     fmt::println("all tasks done,exiting...");
+
+    close(epollfd);
 
 }
 
