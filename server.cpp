@@ -524,6 +524,10 @@ struct http_response_writer : _http_base_writer<HeaderWriter>
     }
 };
 
+struct epoll_callback : callback<>{
+
+};
+
 int epollfd;
 
 struct async_file
@@ -558,13 +562,13 @@ struct async_file
             return;
         }
 
-        m_resume = [this,buf,cb = std::move(cb)]() mutable{
+        callback<> resume = [this,buf,cb = std::move(cb)]() mutable{
             async_read(buf, std::move(cb));
         };
         
         struct epoll_event event;
         event.events = EPOLLIN | EPOLLET;
-        event.data.ptr = this;
+        event.data.ptr = resume.leak_address();
         epoll_ctl(epollfd, EPOLL_CTL_MOD ,m_fd, &event);
 
 
@@ -673,14 +677,20 @@ auto server()
     epollfd = epoll_create1(0);
 
 
-
     auto conn_handler = new http_connection_handler{};
     conn_handler->do_init(connfd);
 
-    while (!to_be_called_later.empty()){
-        auto task = std::move(to_be_called_later.front());
-        to_be_called_later.pop_front();
-        task();
+    struct epoll_event events[10];
+
+    while (true){
+        int ret = epoll_wait(epollfd, events, 10, -1);
+        if(ret<0){
+            throw;
+        }
+        for(int  i=0;i<ret;++i){
+            auto cb = callback<>::from_address(events[i].data.ptr);
+            cb();
+        }
 
     }
     fmt::println("all tasks done,exiting...");
