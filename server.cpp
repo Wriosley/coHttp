@@ -70,7 +70,7 @@ struct address_resolver
         socklen_t m_addrlen;
     };
 
-    struct socket_address_storage
+    struct address
     {
         union
         {
@@ -567,7 +567,7 @@ struct async_file
         };
         
         struct epoll_event event;
-        event.events = EPOLLIN | EPOLLET;
+        event.events = EPOLLIN | EPOLLET |EPOLLONESHOT;
         event.data.ptr = resume.leak_address();
         epoll_ctl(epollfd, EPOLL_CTL_MOD ,m_fd, &event);
 
@@ -582,6 +582,25 @@ struct async_file
             ret = CHECK_CALL_EXCEPT(EAGAIN, write, m_fd, buf.data(), buf.size());
         } while (ret == -1);
         return ret;
+    }
+
+    void async_accept(address_resolver::address &addr, callback<int>cb)
+    {
+        ssize_t ret = CHECK_CALL_EXCEPT(EAGAIN, accept, m_fd, &addr.m_addr, &addr.m_addrlen);
+        if(ret!=-1){
+            cb(ret);
+            return;
+        }
+
+        callback<> resume = [this,&addr,cb = std::move(cb)]() mutable{
+            async_accept(addr, std::move(cb));
+        };
+        
+        struct epoll_event event;
+        event.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+        event.data.ptr = resume.leak_address();
+        epoll_ctl(epollfd, EPOLL_CTL_MOD ,m_fd, &event);
+
     }
 
     void close_file()
@@ -599,7 +618,7 @@ struct http_connection_handler
     bytes_buffer m_buf{1024};
     http_request_parser<> m_req_parse;
 
-    void do_init(int connfd){
+    void do_start(int connfd){
         m_conn = async_file::async_wrap(connfd);
         do_read();
     }
@@ -656,29 +675,45 @@ struct http_connection_handler
         m_conn.close_file();
         delete this;
     }
+
+
 };
 
-auto server()
+struct http_connection_acceptor{
+    async_file m_listen;
+    address_resolver::address m_addr;
+
+    void do_start(std::string name, std::string port)
+    {
+        address_resolver resolver;
+        fmt::println("listening:{}:{}",name,port);
+        auto entry = resolver.resolve(name, port);
+        int listenfd = entry.create_socket_and_bind();
+
+        m_listen = async_file::async_wrap(listenfd);
+
+        do_accept();
+    }
+
+    void do_accept(){
+        //fmt::println("waiting for accept...");
+         CHECK_CALL( listen, m_listen.m_fd, 128);
+        m_listen.async_accept(m_addr, [this](int connfd){
+            fmt::println("accepted connid:{}", connfd);
+            auto conn_handler = new http_connection_handler{};
+            conn_handler->do_start(connfd);
+
+            do_accept();
+        });
+    }
+};
+
+void server()
 {
-    address_resolver resolver;
-
-    fmt::println("listening:127.0.0.1:8080");
-
-    auto entry = resolver.resolve("127.0.0.1", "8080");
-
-    int listenfd = entry.create_socket_and_bind();
-
-    CHECK_CALL(listen, listenfd, SOMAXCONN);
-
-    address_resolver::socket_address_storage addr;
-    int connfd = CHECK_CALL(accept, listenfd, &addr.m_addr, &addr.m_addrlen);
-    fmt::println("accepted connid:{}", connfd);
-
     epollfd = epoll_create1(0);
 
-
-    auto conn_handler = new http_connection_handler{};
-    conn_handler->do_init(connfd);
+    auto acceptor = new http_connection_acceptor;
+    acceptor->do_start("127.0.0.1","8080");
 
     struct epoll_event events[10];
 
@@ -696,8 +731,7 @@ auto server()
     fmt::println("all tasks done,exiting...");
 
     close(epollfd);
-
-}
+};
 
 int main()
 {
